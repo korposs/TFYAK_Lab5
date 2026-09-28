@@ -3,11 +3,12 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QPalette, QColor, QBrush
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QPlainTextEdit, QSplitter, QStyleFactory, QToolBar, QTableWidget, QTableWidgetItem, QComboBox, QLabel
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QPlainTextEdit, QSplitter, QStyleFactory, QToolBar, QTableWidget, QTableWidgetItem, QComboBox, QLabel, QTabWidget
 
 from compiler.scanner import Scanner
-
 from compiler.parser import Parser
+from compiler.ast_nodes import AstBuilder
+from compiler.semantic import SemanticAnalyzer
 
 from compiler.regex_search import search as regex_search, SEARCH_TASKS
 
@@ -46,10 +47,23 @@ class MainWindow(QMainWindow):
         self.result_table.setColumnWidth(1, 200)
         self.result_table.setColumnWidth(2, 100)
 
+        self.ast_tree_view = QPlainTextEdit()
+        self.ast_tree_view.setReadOnly(True)
+        self.ast_tree_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+
+        self.ast_json_view = QPlainTextEdit()
+        self.ast_json_view.setReadOnly(True)
+        self.ast_json_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+
+        self.ast_tabs = QTabWidget()
+        self.ast_tabs.addTab(self.ast_tree_view, "Дерево AST")
+        self.ast_tabs.addTab(self.ast_json_view, "JSON")
+
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.editor)
         splitter.addWidget(self.result_table)
-        splitter.setSizes([400, 300])
+        splitter.addWidget(self.ast_tabs)
+        splitter.setSizes([300, 200, 250])
         splitter.setChildrenCollapsible(False)
 
         self.setCentralWidget(splitter)
@@ -80,6 +94,7 @@ class MainWindow(QMainWindow):
         self.run_lexer_action = QAction("Лексический анализ", self)
         self.run_parser_action = QAction("Синтаксический анализ", self)
         self.run_regex_action = QAction("Поиск подстрок", self)
+        self.run_semantic_action = QAction("Семантический анализ и AST", self)
 
         self.help_action = QAction("Вызов справки", self)
         self.about_action = QAction("О программе", self)
@@ -105,6 +120,7 @@ class MainWindow(QMainWindow):
         self.run_lexer_action.setShortcut(QKeySequence("F5"))
         self.run_parser_action.setShortcut(QKeySequence("F6"))
         self.run_regex_action.setShortcut(QKeySequence("F7"))
+        self.run_semantic_action.setShortcut(QKeySequence("F8"))
 
         self.help_action.setShortcut(QKeySequence.StandardKey.HelpContents)
 
@@ -124,6 +140,7 @@ class MainWindow(QMainWindow):
             self.run_lexer_action: "run_lex.png",
             self.run_parser_action: "run_synt.png",
             self.run_regex_action: "run.png",
+            self.run_semantic_action: "run_sem.png",
         }
 
         for action, filename in icon_map.items():
@@ -168,6 +185,7 @@ class MainWindow(QMainWindow):
         run_menu = menu_bar.addMenu("Пуск")
         run_menu.addAction(self.run_lexer_action)
         run_menu.addAction(self.run_parser_action)
+        run_menu.addAction(self.run_semantic_action)
         run_menu.addSeparator()
         run_menu.addAction(self.run_regex_action)
 
@@ -194,6 +212,7 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self.run_lexer_action)
         toolbar.addAction(self.run_parser_action)
+        toolbar.addAction(self.run_semantic_action)
         toolbar.addSeparator()
         toolbar.addAction(self.help_action)
         toolbar.addAction(self.about_action)
@@ -239,6 +258,7 @@ class MainWindow(QMainWindow):
         self.run_lexer_action.triggered.connect(self._on_run_lexer)
         self.run_parser_action.triggered.connect(self._on_run_parser)
         self.run_regex_action.triggered.connect(self._on_run_regex)
+        self.run_semantic_action.triggered.connect(self._on_run_semantic)
 
         self.help_action.triggered.connect(self._on_show_help)
         self.about_action.triggered.connect(self._on_show_about)
@@ -463,6 +483,71 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Найдено совпадений: {total}")
 
+    def _on_run_semantic(self):
+        text = self.editor.toPlainText()
+
+        scanner = Scanner()
+        tokens, _ = scanner.scan(text)
+
+        parser = Parser()
+        syntax_errors = parser.parse(tokens)
+
+        if syntax_errors:
+            self.ast_tree_view.clear()
+            self.ast_json_view.clear()
+            self._on_run_parser()
+            return
+
+        self.current_mode = "semantic"
+
+        builder = AstBuilder()
+        root = builder.build(tokens)
+
+        analyzer = SemanticAnalyzer()
+        errors = analyzer.analyze(root)
+
+        self._show_semantic_errors(errors)
+
+        self.ast_tree_view.setPlainText(root.to_tree())
+        self.ast_json_view.setPlainText(root.to_json())
+
+    def _show_semantic_errors(self, errors):
+        self.result_table.setColumnCount(3)
+        self.result_table.setHorizontalHeaderLabels(["Тип ошибки", "Сообщение", "Позиция"])
+        self.result_table.setRowCount(0)
+
+        red_bg = QColor(255, 220, 220)
+        red_fg = QColor(180, 0, 0)
+
+        for err in errors:
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            kind_item = QTableWidgetItem(err.kind)
+            message_item = QTableWidgetItem(err.message)
+            pos_item = QTableWidgetItem(err.position)
+            for item in (kind_item, message_item, pos_item):
+                item.setBackground(QBrush(red_bg))
+                item.setForeground(QBrush(red_fg))
+            self.result_table.setItem(row, 0, kind_item)
+            self.result_table.setItem(row, 1, message_item)
+            self.result_table.setItem(row, 2, pos_item)
+
+        total_errors = len(errors)
+        row = self.result_table.rowCount()
+        self.result_table.insertRow(row)
+        if total_errors == 0:
+            summary = QTableWidgetItem("Семантических ошибок нет")
+        else:
+            summary = QTableWidgetItem(f"Итого: ошибок - {total_errors}")
+        font = summary.font()
+        font.setBold(True)
+        summary.setFont(font)
+        summary.setBackground(QBrush(QColor(230, 230, 230)))
+        self.result_table.setItem(row, 0, summary)
+        self.result_table.setSpan(row, 0, 1, 3)
+
+        self.statusBar().showMessage(f"Семантических ошибок: {total_errors}")
+
     def _display_lexeme(self, token):
         if token.type == "WHITESPACE":
             if "\t" in token.lexeme:
@@ -472,6 +557,13 @@ class MainWindow(QMainWindow):
 
     def _on_table_clicked(self, item):
         row = item.row()
+
+        if self.current_mode == "semantic":
+            location_item = self.result_table.item(row, 2)
+            if not location_item:
+                return
+            self._highlight_in_editor(location_item.text(), 1)
+            return
 
         if self.current_mode == "regex":
             location_item = self.result_table.item(row, 1)
@@ -542,6 +634,7 @@ class MainWindow(QMainWindow):
             "<b>Пуск (F5)</b><br>"
             "Лексический анализ - разбор текста на лексемы.<br>"
             "Синтаксический анализ (F6) - проверка структуры объявлений.<br>"
+            "Семантический анализ и AST (F8) - построение дерева и проверка семантики.<br>"
             "Поиск подстрок (F7) - поиск ОГРН, комментариев Pascal или RGB-цветов.<br><br>"
             "<b>Справка (F1)</b><br>"
             "Вызов этого руководства и сведений о программе."
@@ -551,8 +644,8 @@ class MainWindow(QMainWindow):
     def _on_show_about(self):
         text = (
             f"<b>{APP_TITLE}</b><br><br>"
-            "Лабораторная работа №4<br>"
-            "Реализация алгоритма поиска подстрок с помощью регулярных выражений»<br><br>"
+            "Лабораторная работа №5<br>"
+            "«Построение AST и проверка контекстно-зависимых условий»<br><br>"
             "<b>Тема:</b> Объявление структуры на языке Java<br><br>"
             "<b>Автор:</b> Башинов Арья Игоревич, группа АП-326"
         )

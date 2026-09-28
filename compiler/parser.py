@@ -8,8 +8,6 @@ TYPE_KEYWORDS = {
 
 
 class SyntaxError:
-    """Одна синтаксическая ошибка."""
-
     def __init__(self, fragment, line, col, message):
         self.fragment = fragment
         self.line = line
@@ -21,8 +19,6 @@ class SyntaxError:
 
 
 class Parser:
-    """Синтаксический анализатор методом рекурсивного спуска."""
-
     def __init__(self):
         self.tokens = []
         self.pos = 0
@@ -37,7 +33,6 @@ class Parser:
         return self.errors
 
     def parse_program(self):
-        """Program -> Declaration Program | ε"""
         safety = 0
         max_iterations = len(self.tokens) * 3 + 10
 
@@ -60,7 +55,6 @@ class Parser:
                 self._advance()
 
     def parse_declaration(self):
-        """Declaration -> record id ( ParamList ) { } ;"""
         if not self._expect_keyword("record", "Ожидалось ключевое слово 'record'"):
             self._skip_to_sync()
             return
@@ -94,8 +88,6 @@ class Parser:
             return
 
     def parse_param_list(self):
-        """ParamList -> Param Tail | ε
-        Возвращает True, если разбор успешен, False - если ошибка."""
         cur = self._current()
         if cur is None:
             return True
@@ -109,7 +101,6 @@ class Parser:
         return self.parse_tail()
 
     def parse_param(self):
-        """Param -> Type id"""
         if not self.parse_type():
             return False
 
@@ -119,7 +110,7 @@ class Parser:
         return True
 
     def parse_type(self):
-        """Type -> String | int | long | double | float | boolean | char | byte | short"""
+        """Type -> String | int | ... | id"""
         cur = self._current()
         if cur is None:
             self._add_error("EOF", 0, 0, "Ожидался тип параметра")
@@ -129,12 +120,14 @@ class Parser:
             self._advance()
             return True
 
-        self._add_error(cur.lexeme, cur.line, cur.start,
-                        f"Ожидался тип параметра, получено '{cur.lexeme}'")
+        if cur.type == "IDENTIFIER":
+            self._advance()
+            return True
+
+        self._add_error(cur.lexeme, cur.line, cur.start, f"Ожидался тип параметра, получено '{cur.lexeme}'")
         return False
 
     def parse_tail(self):
-        """Tail -> , Param Tail | ε"""
         cur = self._current()
         if cur is None:
             return True
@@ -184,7 +177,6 @@ class Parser:
         return False
 
     def _skip_to_sync(self):
-        """Пропустить токены до ближайшего ';' или 'record'."""
         while self._current() is not None:
             cur = self._current()
             if cur.type == "SEMICOLON":
